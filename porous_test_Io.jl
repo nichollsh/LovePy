@@ -3,29 +3,39 @@ using .TidalLoveNumbers
 using DoubleFloats
 using PyPlot
 
+prec = TidalLoveNumbers.prec
+precc = TidalLoveNumbers.precc
+
 G = 6.6743e-11
 e = 0.0041
 
-h_core = 700.0
-h_mantle_low = 800.
-h_mantle_up = 300.
 
-h_crust = 20.
+dc = 0.0
+dm = +0.0
+da = +0.0
+dcrust = 200
+
+h_core = 700 + dc
+h_mantle_low = 800. + dm - dc - da
+h_mantle_up = 300. + da - dm
+h_crust = 20. + dcrust
+
 ω = 2*2.047e-5
 
 #enceladus test model:
 n = 2
-ρₛ = [7640, 3300, 3300, 3300]
+ρₛ = [7640, 3300, 3300, prec(3300)]
 r = [0, 
      h_core, 
      h_core+h_mantle_low, 
      h_core+h_mantle_low+h_mantle_up, 
      h_core+h_mantle_low+h_mantle_up+h_crust] .* 1e3
-μ = [40, 60, 60, 60] .* 1e9
+μ = [40, 60, 60, prec(60)] .* 1e9
 κ = [100e9, 100e9, 100e9, 100e9]
-η = [1e21, 1e21, 1e21, 1e25]
 
+η = [1e21, 1e20, 1e21, prec(1e25)]
 
+println("Internal structure: ", r/1e3)
 bp = 3
 tp = 3
 
@@ -33,10 +43,38 @@ tp = 3
 ρₗ = [0, 0, 3300, 0]
 # α  = [0, 0, 0.95, 0., 0]
 κₗ = [0, 0, 1e10, 0]
-k = [0, 0, 1e-4, 0]
+k = [0, 0, 1e-6, 0]
 
-ηₗ = [0, 0, 1e0, 0]
-ϕ =  [0, 0, 0.3, 0]
+ηₗ = [0, 0, 1e-2, 0]
+ϕ =  [0, 0, 0.1, 0]
+
+####################################
+# ρₛ = [7640, 3300, 3300]
+# h_core = 700+600 
+# h_mantle_up = 1100-600
+# h_crust = 20
+# r = [0, 
+#      h_core, 
+#      h_core+h_mantle_up, 
+#      h_core+h_mantle_up+h_crust] .* 1e3
+# μ = [60, 60, 60] .* 1e9
+# κ = [100e9, 100e9, 100e9] .* 200
+# η = [1e21, 1e21, 1e21]
+
+
+# bp = 3
+# tp = 3
+
+
+# ρₗ = [0, 3300, 0]
+# # α  = [0, 0, 0.95, 0., 0]
+# κₗ = [0, 1e10, 0]
+# k = [0, 1e-4, 0]
+
+# ηₗ = [0, 1e-3, 0]
+# ϕ =  [0, 0.1, 0]
+################################################
+
 
 ρ = (1 .- ϕ) .* ρₛ + ϕ .* ρₗ # bulk density
 
@@ -48,16 +86,20 @@ r = expand_layers(r)
 
 g = get_g(r, ρ)
 
-ηs = 10 .^ collect(15:0.2:23)
+ηs = 10 .^ collect(8:0.5:20)
 
 Edot1 = zeros(length(ηs))
 Edot2 = zeros(length(ηs))
 k2_1 = zeros(ComplexF64, length(ηs))
 k2_2 = zeros(ComplexF64, length(ηs))
+h2_1 = zeros(ComplexF64, length(ηs))
+h2_2 = zeros(ComplexF64, length(ηs))
 
 for i in eachindex(ηs)
     η[3] = ηs[i]
+        
     μc =  1im*ω*μ ./ (1im*ω .+ μ ./ η)
+    # μc[2] = μ[2]
 
     Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid")
 
@@ -88,21 +130,30 @@ for i in eachindex(ηs)
 
 
     k2 = y[5] - 1
+    h2 = -y[1]*g[end,end]
     println("Solid body k2 = ", k2)  
 
     k2_1[i] = k2
+    h2_1[i] = h2
 
     Ediss1 = 21/2 * -imag(k2) * (ω*r[end,end])^5/G * e^2
     Edot1[i] = Ediss1
 end
 
 fig, (ax1, ax2) = plt.subplots(ncols=2, figsize=(8,3.5))
-for j in -7:1:-5
+for j in -7:1:-7
     for i in eachindex(ηs)
         #######################################################################
         η[3] = ηs[i]
         k[3] = 10.0^j
+        # η[2] = ηs[i]
+        # k[3] = 10.0^j
+        # η[2] = ηs[i]
+        # k[2] = 10.0^j
+        # η[4] = ηs[i]
+        # k[4] = 10.0^j
         μc =  1im*ω*μ ./ (1im*ω .+ μ ./ η)
+        # μc[2] = μ[2]
 
         Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid")
 
@@ -112,61 +163,74 @@ for j in -7:1:-5
 
         # Bprod4 = get_B_product(r, ρ, g, μ, κ, ω, ρₗ, κₗ, ηₗ, ϕ, 2, tp)[:, :, :, :]
 
-        B1 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 2, 2)[:, :, end, 2]
-        B2 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 3, 3)[:, :, end, 3]
-        B3 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 4, 4)[:, :, end, 4]
+        # B1 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 2, 2)[:, :, end, 2]
+        # B2 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 3, 3)[:, :, end, 3]
+        # B3 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 4, 4)[:, :, end, 4]
         # display(B3*B2*B1 .- Bprod1[:,:,end,end])
         # display()
 
-        Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid", 8, 4)
+        # Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid", 8, 4)
 
-        s1 = B1*Ic
+        # s1 = B1*Ic
 
-        s1_start = copy(s1)
-        s1_start[7,4] = 1.0 # Set pore pressure to non-zero value
-        s2 = B2*s1_start
+        # s1_start = copy(s1)
+        # s1_start[7,4] = 1.0 # Set pore pressure to non-zero value
+        # s2 = B2*s1_start
 
-        s2_start = copy(s2)
-        s2_start[7:8, :] .= 0.0  # Set pore pressure and Darcy flux to zero value
-        s3 = B3*s2
+        # s2_start = copy(s2)
+        # s2_start[7:8, :] .= 0.0  # Set pore pressure and Darcy flux to zero value
+        # s3 = B3*s2
 
 
-        # Construct boundary condition matrix
-        M = zeros(ComplexDF64, 4,4)
+        # # Construct boundary condition matrix
+        # M = zeros(ComplexDF64, 4,4)
 
-        # Row 1 - Radial Stress
-        M[1, 1] = s3[3,1]
-        M[1, 2] = s3[3,2]
-        M[1, 3] = s3[3,3]
-        M[1, 4] = s3[3,4]
+        # # Row 1 - Radial Stress
+        # M[1, 1] = s3[3,1]
+        # M[1, 2] = s3[3,2]
+        # M[1, 3] = s3[3,3]
+        # M[1, 4] = s3[3,4]
 
-        # Row 2 - Tangential Stress
-        M[2, 1] = s3[4,1]
-        M[2, 2] = s3[4,2]
-        M[2, 3] = s3[4,3]
-        M[2, 4] = s3[4,4]
+        # # Row 2 - Tangential Stress
+        # M[2, 1] = s3[4,1]
+        # M[2, 2] = s3[4,2]
+        # M[2, 3] = s3[4,3]
+        # M[2, 4] = s3[4,4]
 
-        # Row 3 - Potential Stress
-        M[3, 1] = s3[6,1]
-        M[3, 2] = s3[6,2]
-        M[3, 3] = s3[6,3]
-        M[3, 4] = s3[6,4]
+        # # Row 3 - Potential Stress
+        # M[3, 1] = s3[6,1]
+        # M[3, 2] = s3[6,2]
+        # M[3, 3] = s3[6,3]
+        # M[3, 4] = s3[6,4]
 
-        #  Row 4 - Darcy flux (r = r_tp)
-        M[4, 1] = s2[8,1]
-        M[4, 2] = s2[8,2]
-        M[4, 3] = s2[8,3]
-        M[4, 4] = s2[8,4]
+        # #  Row 4 - Darcy flux (r = r_tp)
+        # M[4, 1] = s2[8,1]
+        # M[4, 2] = s2[8,2]
+        # M[4, 3] = s2[8,3]
+        # M[4, 4] = s2[8,4]
 
-        b = zeros(ComplexF64, 4)
-        b[3] = (2n+1)/r[end,end] 
-        C2 = M \ b
+        # b = zeros(ComplexF64, 4)
+        # b[3] = (2n+1)/r[end,end] 
+        # C2 = M \ b
 
-        y = s3*C2
+        # y = s3*C2
 
-        k2 = y[5] - 1
+        ytest = @time calculate_y(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k)
+
+        # k2 = y[5] - 1
+
+        k2 = ytest[5,end,end] - 1
+        h2 = -ytest[1,end,end]*g[end,end]
+
+
+        if (i==1) 
+            display(ytest[:,1,end-1])
+        end
+        # display(y)
+        # display(ytest[:,2,3])
 
         k2_2[i] = k2    # println("Porous body k2 = ", k2)  
+        h2_2[i] = h2
         # println("k2 = ", y[5] - 1)  
         # println("h2 = ", -g[end]*y[1] )
         Ediss2 = 21/2 * -imag(k2) * (ω*r[end,end])^5/G * e^2
@@ -176,7 +240,8 @@ for j in -7:1:-5
     end
 
     ax2.loglog(ηs, Edot2/1e12, label="Melt, k=\$10^{$(j)}\$ m\$^2\$")
-    ax1.semilogx(ηs, real(k2_2))
+    # ax1.semilogx(ηs, real(k2_2))
+    ax1.semilogx(ηs, real(h2_2))
 end
 
 
@@ -189,7 +254,8 @@ ax2.set_ylabel("Tidal Heating Rate [TW]")
 
 ax2.axhspan((9.33-1.87)*1e13/1e12, (9.33+1.87)*1e13/1e12, alpha=0.5)
 
-ax1.semilogx(ηs, real(k2_1), "k--")
+# ax1.semilogx(ηs, real(k2_1), "k--")
+ax1.semilogx(ηs, real(h2_1), "k--")
 
 # ax1.loglog(μs , k2_all, color="C1", label="Numerical")
 # ax1.loglog(μs, k2_an, "k:", label="Analytical (solid only)")
@@ -204,7 +270,7 @@ fig.subplots_adjust(wspace=.3)
 
 fig.savefig("io_porous.png", dpi=600, bbox_inches="tight")
 
-show()
+# show()
 
 
 # # P3 = zeros(3, 8)
