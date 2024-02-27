@@ -37,4 +37,8 @@ module SphericalHarmonics
         return Plm.(n,m,cos.(theta)) .* exp.(1im * m .* phi)
     end
 
+    # function dYnmdθ(n,m,theta,phi)
+    #     return 1/sin.(theta) * (n*(n-m+1) * Ynm(n+1,m,theta,phi) - n*(n-m+1) * Ynm(n+1,m,theta,phi)) 
+    # end
+
 end

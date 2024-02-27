@@ -7,7 +7,7 @@ using Statistics
 prec = TidalLoveNumbers.prec
 precc = TidalLoveNumbers.precc
 
-non_dim = true
+non_dim = false
 
 G = prec(6.6743e-11)
 e = 0.0041
@@ -43,8 +43,8 @@ tp = 3
 κₗ = [0, 0, 10e10, 0]
 k = [0, 0, 1e-6, 0]
 
-ηₗ = [0, 0, 1e-2, 0]
-ϕ =  [0, 0, prec(0.3), 0]
+ηₗ = [0, 0, 1e1, 0]
+ϕ =  [0, 0, prec(0.0001), 0]
 
 ρ = (1 .- ϕ) .* ρₛ + ϕ .* ρₗ # bulk density
 r = expand_layers(r)
@@ -89,65 +89,76 @@ end
 
 
 
-ηs = 10 .^ collect(19:1:19)
+ηs = 10 .^ collect(12:1:12)
 
 Edot1 = zeros(length(ηs))
 Edot2 = zeros(length(ηs))
 k2_1 = zeros(ComplexF64, length(ηs))
 k2_2 = zeros(ComplexF64, length(ηs))
 
-yall = zeros(precc, 8, size(r)[1]-1,size(r)[2])
-for i in eachindex(ηs)
-    η[3] = ηs[i] 
-    if non_dim
-        η[3] = η[3]/(μ0 * T )
-    end
+# yall = zeros(precc, 8, size(r)[1]-1,size(r)[2])
+# for i in eachindex(ηs)
+#     η[3] = ηs[i] 
+#     if non_dim
+#         η[3] = η[3]/(μ0 * T )
+#     end
 
-    μc =  1im*ω*μ ./ (1im*ω .+ μ ./ η)
+#     μc =  1im*ω*μ ./ (1im*ω .+ μ ./ η)
 
-    Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid")
+#     Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid")
 
-    Bprod1 = get_B_product(r, ρ, g, μc, κ)[:, :, :, :]
+#     Bprod1 = get_B_product(r, ρ, g, μc, κ)[:, :, :, :]
 
-    # Projection matrix for the third, fourth, sixth, and eigth 
-    # components of the solution
-    P1 = zeros(3, 6)
-    P1[1,3] = 1
-    P1[2,4] = 1
-    P1[3,6] = 1
+#     # Projection matrix for the third, fourth, sixth, and eigth 
+#     # components of the solution
+#     P1 = zeros(3, 6)
+#     P1[1,3] = 1
+#     P1[2,4] = 1
+#     P1[3,6] = 1
 
-    yR = Bprod1[:,:,end,end]*Ic
-
-
-    # Get boundary condtion matrix
-    M = P1*yR
-
-    b = zeros(ComplexDF64, 3)
-    b[3] = (2n+1)/r[end,end] 
-    C2 = M \ b
-
-    y = yR*C2
-
-    # C2 = M[1:3,1:3] \ b[1:3]
-
-    # y = yR[1:6,1:3]*C2
+#     yR = Bprod1[:,:,end,end]*Ic
 
 
-    k2 = y[5] - 1
-    # println("Solid body k2 = ", k2)  
+#     # Get boundary condtion matrix
+#     M = P1*yR
 
-    k2_1[i] = k2
+#     b = zeros(ComplexDF64, 3)
+#     b[3] = (2n+1)/r[end,end] 
+#     C2 = M \ b
 
-    Ediss1 = 21/2 * -imag(k2) * (ω0*R)^5/G * e^2
-    Edot1[i] = Ediss1
-end
+#     y = yR*C2
+
+#     # C2 = M[1:3,1:3] \ b[1:3]
+
+#     # y = yR[1:6,1:3]*C2
+
+
+#     k2 = y[5] - 1
+#     # println("Solid body k2 = ", k2)  
+
+#     k2_1[i] = k2
+
+#     Ediss1 = 21/2 * -imag(k2) * (ω0*R)^5/G * e^2
+#     Edot1[i] = Ediss1
+# end
 
 # fig, axes = plt.subplots(ncols=8, figsize=(12,3.5))
-fig, axes = plt.subplots(figsize=(4.5,3.5))
+
 ytest = 0
 disp = 0
 vel = 0
-for j in -7.3:1:-7.3
+ϵ = 0
+σ = 0
+p = 0
+ζ = 0
+
+res = 10.0
+lons = deg2rad.(collect(0:res:360-0.001))'
+clats = deg2rad.(collect(0:res:180))
+dres = deg2rad(res)
+
+
+for j in -6:1:-6
     for i in eachindex(ηs)
         #######################################################################
         η[3] = ηs[i] * (non_dim ? 1.0/(μ0*T) : 1.0)
@@ -157,113 +168,27 @@ for j in -7.3:1:-7.3
 
         # μc = μ
 
-        
-        # # Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid")
-
-        # # Solve y!
-
-        # B1 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 2, 2)[:, :, :, 2]
-        # B2 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 3, 3)[:, :, :, 3]
-        # B3 = get_B_product(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, 4, 4)[:, :, :, 4]
-        # # display(B3*B2*B1 .- Bprod1[:,:,end,end])
-        # # display()
-
-        # Ic = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], "liquid", 8, 4)
-
-        # s1 = B1[:,:,end]*Ic
-
-        # s1_start = copy(s1)
-        # s1_start[7,4] = 1.0 # Set pore pressure to non-zero value
-        # s2 = B2[:,:,end]*s1_start
-
-        # s2_start = copy(s2)
-        # s2_start[7:8, :] .= 0.0  # Set pore pressure and Darcy flux to zero value
-        # s3 = B3[:,:,end]*s2
-        ###
-
-        
-
         global y = calculate_y(r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k)
-
-        # println("Y test")
-        # display(ytest)
-
-        
-
-
-
-        # # Construct boundary condition matrix
-        # # M = zeros(ComplexDF64, 4,4)
-        # M = zeros(precc, 4,4)
-
-        # # Row 1 - Radial Stress
-        # M[1, 1] = s3[3,1]
-        # M[1, 2] = s3[3,2]
-        # M[1, 3] = s3[3,3]
-        # M[1, 4] = s3[3,4]
-
-        # # Row 2 - Tangential Stress
-        # M[2, 1] = s3[4,1]
-        # M[2, 2] = s3[4,2]
-        # M[2, 3] = s3[4,3]
-        # M[2, 4] = s3[4,4]
-
-        # # Row 3 - Potential Stress
-        # M[3, 1] = s3[6,1]
-        # M[3, 2] = s3[6,2]
-        # M[3, 3] = s3[6,3]
-        # M[3, 4] = s3[6,4]
-
-        # #  Row 4 - Darcy flux (r = r_tp)
-        # M[4, 1] = s2[8,1]
-        # M[4, 2] = s2[8,2]
-        # M[4, 3] = s2[8,3]
-        # M[4, 4] = s2[8,4]
-
-        # # b = zeros(ComplexF64, 4)
-        # b = zeros(precc, 4)
-        # b[3] = (2n+1)/r[end,end] 
-        # C2 = M \ b
-
-        # y = s3*C2
-
-        # # display(y .- ytest[:,end,end])
-
-        # # step1 = B1[:,:,end]*Ic*C2
-        # # step1[7] = C2[4]
-        # # step2 = B2[:,:,end]*step1
-        # # step2[7:8] .= 0.0
-        
-        # # C3 = zeros(precc, 4)
-        # # C3[1] = 1.0
-        # # # println(size(yall), " ", size(r),size(B1))
-        # # for k in 1:size(B1)[3]
-        # #     y12 = B1[:,:,k]*Ic*C2
-        # #     yall[:,k,2] .= y12[:] 
-        # #     y23 = B2[:,:,k]*step1
-        # #     yall[:,k,3] .= y23[:]
-        # #     y34 = B3[:,:,k]*step2
-        # #     yall[:,k,4] .= y34[:] 
-        # #     # display(yall[:,k,4])
-        # # end
-        # # # display(yall[:,1,4])
-        # # display(C2)
 
         yR = y[:,end,end]
 
-        U22E =  7/8 * ω0^2*R^2*e * (non_dim ? ρ0/μ0 : 1)
+        U22E =  7/8 * ω0^2*R^2*e * (non_dim ? ρ0/μ0 : 1) 
         U22W = -1/8 * ω0^2*R^2*e * (non_dim ? ρ0/μ0 : 1)
         U20  = -3/2 * ω0^2*R^2*e * (non_dim ? ρ0/μ0 : 1)
 
         # global disp = get_displacement.(y[:,end,end-1], mag, 0.25π)
-        sol_22  = get_solution(conj.(y), 2,  2, r, ρ, g, μ, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k)
-        sol_22c = get_solution(conj.(y), 2, -2, r, ρ, g, μ, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k)
-        sol_20  = get_solution(conj.(y), 2,  0, r, ρ, g, μ, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k)
+        sol_22  = get_solution(conj.(y), 2,  2, r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, res)
+        sol_22c = get_solution(conj.(y), 2, -2, r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, res)
+        sol_20  = get_solution(conj.(y), 2,  0, r, ρ, g, μc, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, res)
 
         global disp = U22E*sol_22[1] + U22W*sol_22c[1] + U20*sol_20[1] 
-        # global disp = 0.5*(disp + conj.(disp))
         global vel = U22E*sol_22[2] + U22W*sol_22c[2] + U20*sol_20[2] 
-        # global vel = 0.5*(vel + conj.(vel))
+        
+        global ϵ = U22E*sol_22[3] + U22W*sol_22c[3] + U20*sol_20[3] 
+        global σ = U22E*sol_22[4] + U22W*sol_22c[4] + U20*sol_20[4] 
+
+        global p = U22E*sol_22[5] + U22W*sol_22c[5] + U20*sol_20[5] 
+        global ζ = U22E*sol_22[6] + U22W*sol_22c[6] + U20*sol_20[6] 
 
 
         k2 = yR[5] - 1
@@ -273,9 +198,9 @@ for j in -7.3:1:-7.3
         println("h2 = ", -g[end]*yR[1] )
         Ediss2 = 21/2 * -imag(k2) * (ω0*R)^5/G * e^2
         Edot2[i] = Ediss2
-        # println(Ediss1/1e9, " ", Ediss2/1e9)
-        println(g[end,end])
-        println(R^2 * ω0^2 * e / g[end,end] )
+        println("Dissipated Energy Total: ", Ediss2/1e9)
+        # println(g[end,end])
+        # println(R^2 * ω0^2 * e / g[end,end] )
 
     end
 
@@ -287,30 +212,69 @@ end
 if non_dim
     disp[:] .*= R
     vel[:] .*= R / T
+    σ[:] .*= μ0
+    p[:] .*= μ0
 end
 
 # Scale the solutions by (r/R)^2
-for i in 1:size(r)[2]
-    for j in 1:size(r)[1]-1
-        scale = non_dim ? 1.0 : 1.0/R
-        disp[:,:,:,j,i] .*= (r[j,i] * scale).^2
-        vel[:,:,:,j,i] .*= (r[j,i] * scale ).^2
-    end 
-end
+# for i in 1:size(r)[2]
+#     for j in 1:size(r)[1]-1
+#         scale = non_dim ? 1.0 : 1.0/R
+#         disp[:,:,:,j,i] .*= (r[j,i] * scale).^2
+#         vel[:,:,:,j,i] .*= (r[j,i] * scale ).^2
+#         ϵ[:,:,:,j,i] .*= (r[j,i] * scale ).^2
+#         σ[:,:,:,j,i] .*= (r[j,i] * scale ).^2
+#         p[:,:,j,i]   .*= (r[j,i] * scale ).^2
+#         ζ[:,:,j,i]   .*= (r[j,i] * scale ).^2
+#     end 
+# end
 
-Eₗ_vol = zeros( (size(vel)[1], size(vel)[2], size(vel)[4]) )
+Eₗ_vol = zeros(  (size(vel)[1], size(vel)[2], size(vel)[4], size(vel)[5]) )
+Eₛ_vol = zeros(  (size(vel)[1], size(vel)[2], size(vel)[4], size(vel)[5]) )
+Eₛ_area = zeros( (size(vel)[1], size(vel)[2]) )
 Eₗ_area = zeros( (size(vel)[1], size(vel)[2]) )
-println(size(vel))
-display(k)
-for i in 1:size(r)[1]-1
-    # Dissipated energy per unit volume
-    Eₗ_vol[:,:,i] = 0.5 * ηₗ[end-1]/k[end-1] * (abs.(vel[:,:,1,i,end-1]).^2 + abs.(vel[:,:,2,i,end-1]).^2 + abs.(vel[:,:,3,i,end-1]).^2)
-    non_dim ? Eₗ_vol[:,:,i] *=  μ0 * T / R^2 : continue # dimensionalise ηₗ and k
+Eₗ_total = 0.0
+Eₛ_total = 0.0
 
-    # Integrate across r to find dissipated energy per unit area
-    dr = (r[i+1, end-1] - r[i, end-1]) * (non_dim ? R : 1.0)
-    Eₗ_area[:,:] += Eₗ_vol[:,:,i] * dr
+
+
+
+for j in 2:size(r)[2]
+    for i in 1:size(r)[1]-1
+
+        dr = (r[i+1, j] - r[i, j]) * (non_dim ? R : 1.0)
+        dvol = 4π/3 * (r[i+1, j]^3 - r[i, j]^3)
+
+        # Dissipated energy per unit volume
+        Eₛ_vol[:,:,i, j] =  ( sum(σ[:,:,1:3,i,j] .* conj.(ϵ[:,:,1:3,i,j]), dims=3) .- sum(conj.(σ[:,:,1:3,i,j]) .* ϵ[:,:,1:3,i,j], dims=3) ) * 1im 
+        Eₛ_vol[:,:,i, j] += 2( sum(σ[:,:,4:6,i,j] .* conj.(ϵ[:,:,4:6,i,j]), dims=3) .- sum(conj.(σ[:,:,4:6,i,j]) .* ϵ[:,:,4:6,i,j], dims=3) ) * 1im 
+
+        if ϕ[j] > 0
+            Eₛ_vol[:,:,i, j] += ( p[:,:,i,j] .* conj.(ζ[:,:,i,j]) .- conj.(p[:,:,i,j]) .* ζ[:,:,i,j] ) * 1im 
+            Eₗ_vol[:,:,i, j] = 0.5 * ηₗ[j]/k[j] * (abs.(vel[:,:,1,i,j]).^2 + abs.(vel[:,:,2,i,j]).^2 + abs.(vel[:,:,3,i,j]).^2)
+            Eₗ_vol[:,:,i, j] *= (non_dim ? μ0 * T / R^2 : 1.0) # dimensionalise ηₗ and k
+        end
+
+        Eₛ_vol[:,:,i, j] .*= -0.25ω0
+
+        # Integrate across r to find dissipated energy per unit area
+        Eₗ_area[:,:] += Eₗ_vol[:, :, i, j] * dr
+        Eₛ_area[:,:] .+= Eₛ_vol[:,:, i, j] * dr
+
+        global Eₗ_total += sum(sin.(clats) .* (Eₗ_vol[:,:,i,j] * dr)  * dres^2 * r[i,j]^2.0) 
+        global Eₛ_total += sum(sin.(clats) .* (Eₛ_vol[:,:,i,j] * dr)  * dres^2 * r[i,j]^2.0) 
+
+        
+    end
 end
+
+# Eₗ_total += sum(sin.(clats) .* Eₗ_area  * dres^2 * R^2.0) 
+# Eₛ_total += sum(sin.(clats) .* Eₛ_area  * dres^2 * R^2.0) 
+println(Eₗ_total / 1e9)
+println(Eₛ_total / 1e9)
+
+println((Eₗ_total + Eₛ_total) / 1e9)
+
 # To scale y functions for a given tida potential, use Eq. D6 in Rovira-Navarro et al., (2022)
 
 # for i in 1:8
@@ -322,11 +286,19 @@ end
 
 # Eₗ_area = sum(Eₗ_vol*r[j,end-1], dims=3)[:,:,1]
 # println(size(Eₗ_area))
+fig, axes = plt.subplots(ncols=2,figsize=(12,3.5))
 
-c = axes.contourf(Eₗ_area)
+# for i in 1:6
+#     c = axes[i].contourf( (σ[:,:,i,end,end-1].*conj.(ϵ[:,:,i,end,end-1]) .- conj.(σ[:,:,i,end,end-1]).*ϵ[:,:,i,end,end-1]) * 1im
+#                         )
 
+#     PyPlot.colorbar(c)
+# end
+
+c = axes[1].contourf(Eₛ_area)
 PyPlot.colorbar(c)
-
+c = axes[2].contourf(Eₗ_area)
+PyPlot.colorbar(c)
 # ax2.set_xlabel("Asthenosphere Solid Viscosity [Pa s]")
 # ax2.set_ylabel("Tidal Heating Rate [TW]")
 
