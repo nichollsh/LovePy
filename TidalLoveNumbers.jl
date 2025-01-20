@@ -3,45 +3,56 @@
 
 # μ: solid shear modulus
 # ρ: solid density 
-# ρₗ: liquid density 
 # κ: solid bulk modulus 
-# κₗ: liquid bulk modulus 
-# α: Biot's constant 
 # λ: Lame's First Parameter
 # η: solid viscosity 
-# ηₗ: liquid viscosity 
 # g: gravity 
-# ϕ: porosity 
-# k: permeability 
 # ω: rotation rate
 
 
 module TidalLoveNumbers
 
     using LinearAlgebra
+    using DoubleFloats
+    using AssociatedLegendrePolynomials
+    include("SphericalHarmonics.jl")
+    using .SphericalHarmonics
 
-    export get_g, get_A!, get_A, get_B_product, get_Ic
-    export expand_layers
+    export get_g, get_A!, get_A, get_B_product, get_Ic, get_B
+    export expand_layers, set_G, calculate_y
+    export get_displacement, get_solution
+    export get_bulk_heating
 
-    G = 6.67408e-11
+    # If results seem odd, you can increase the numerical precision with
+    # one of the options below. These get quite a bit slower...
+    prec = Float64 
+    precc = ComplexF64 
+
+    # prec = Double64     
+    # precc = ComplexDF64 
+
+    # prec = BigFloat
+    # precc = Complex{BigFloat}
+
+    G = prec(6.6743e-11)
     n = 2
 
-    porous = false
+    M = 6              # Matrix size: 6x6 if only solid material, 8x8 for two-phases
+    nr = 80            # Number of sub-layers in each layer (TODO: change to an array)
 
-    M = 6 + 2porous         # Matrix size: 6x6 if only solid material, 8x8 for two-phases
-    nr = 20               # Number of sub-layers in each layer (TODO: change to an array)
+    Abot = zeros(precc, 6, 6)
+    Amid = zeros(precc, 6, 6)
+    Atop = zeros(precc, 6, 6)
 
-    α = 0.1             
-    k = 1e-10
-    # ω = 2*2.05e-5
-    # ϕ = 0.1
-    # ηₗ = 1e-2
-    # η = 1e21
-    ρₗ = 1e3
+    # Overwrite Gravitional constant for non-dimensional 
+    # calculations
+    function set_G(new_G)
+        TidalLoveNumbers.G = new_G
+    end
 
     function get_g(r, ρ)
-        g = zero(r)
-        M = zero(r)
+        g = zeros(prec, size(r))
+        M = zeros(prec, size(r))
 
         for i in 1:size(r)[2]
             M[2:end,i] = 4.0/3.0 * π .* diff(r[:,i].^3) .* ρ[i]
@@ -54,16 +65,16 @@ module TidalLoveNumbers
 
     end
 
-    function get_A(r, ρ, g, μ, κ, η, ω)
-        A = zeros(ComplexF64, 6, 6) 
-        get_A!(A, r, ρ, g, μ, κ, η, ω)
+    function get_A(r, ρ, g, μ, κ)
+        A = zeros(precc, 6, 6) 
+        get_A!(A, r, ρ, g, μ, κ)
         return A
     end
 
-    function get_A!(A::Matrix, r, ρ, g, μ, κ, η, ω)
-        μ =  1im*ω*μ / (1im*ω + μ/η)    # Complex shear modulus for a Maxwell rheology
-
-        λ = κ .- 2μ/3
+    function get_A!(A::Matrix, r, ρ, g, μ, κ, λ=nothing)
+        if isnothing(λ)
+            λ = κ - 2μ/3
+        end
 
         r_inv = 1.0/r
         β_inv = 1.0/(2μ + λ)
@@ -76,186 +87,330 @@ module TidalLoveNumbers
         A[2,2] = r_inv
         A[2,4] = 1.0 / μ
 
-        A[3,1] = 4r_inv * (3κ*μ*r_inv*β_inv - ρ*g) #+ 
-                #  porous*(2g*ρₗ*α*r_inv * (-λ*β_inv +1))             # two-phase
+        A[3,1] = 4r_inv * (3κ*μ*r_inv*β_inv - ρ*g)
         A[3,2] = -n*(n+1)*r_inv * (6κ*μ*r_inv*β_inv - ρ*g ) #+
-                #  porous*(n*(n+1)*g*ρₗ*α*r_inv * (λ*β_inv - 1))      # two-phase
         A[3,3] = β_inv * (-4μ*r_inv )
-                #  + porous*g *α*ρₗ)                                  # two-phase                                                
         A[3,4] = n*(n+1)*r_inv
         A[3,5] = -ρ * (n+1)*r_inv
         A[3,6] = ρ
-        # if porous
-        #     A[3,7] = α*β_inv * 
-        #              (-4μ*r_inv + ρₗ*g*α) + g*ρₗ*(ϕ/κₗ + (α-ϕ)/κ)
-        #     A[3,8] = 4π*G*ρₗ*ρ*k/(1im*ω*ηₗ)
-        # end
 
         A[4,1] = -r_inv * (6κ*μ*r_inv*β_inv - ρ*g )
         A[4,2] = 2μ*r_inv^2 * (n*(n+1)*(1 + λ*β_inv) - 1.0 )
         A[4,3] = -r_inv * λ * β_inv # changed to match sabadini    
         A[4,4] = -3r_inv
         A[4,5] = ρ*r_inv
-        # if porous
-        #     A[4,7] = 2α*μ*r_inv / (2μ + λ)
-        # end
 
         A[5,1] = -4π * G * ρ
         A[5,5] = -(n+1)r_inv
         A[5,6] = 1.0
-        # if porous
-        #     A[5,8] = 4π*G*ρₗ*k / (1im * ω * ηₗ)
-        # end
 
         A[6,1] = -4π*(n+1)*G*ρ*r_inv
         A[6,2] = -A[6,1]*n
-        # A[6,5] = porous * (-4π*n*(n+1)G*(ρₗ)^2*k*r_inv^2 / ( 1im*ω*ηₗ)) # two-phase
         A[6,6] = (n-1)r_inv
-        # if porous                                                       # two-phase
-        #     A[6,7] = -4π*n(n+1)G*ρₗ*k*r_inv^2 / ( 1im*ω*ηₗ)
-        #     A[6,8] = 4π*G*(n+1)*ρₗ*k*r_inv / (1im*ω*ηₗ)
-        # end
 
-        # if porous                                                       # two-phase
-        #     A[7,1] = 4π*G*ρₗ*ρ
-        #     A[7,5] = ρₗ*(n+1)*r_inv
-        #     A[7,6] = ρₗ
-        #     A[7,7] = -g*ρₗ / κₗ
-        #     A[7,8] = 1 - 4π*G*(ρₗ)^2*k / (1im*ω*ηₗ)
-        
-        #     A[8,1] = 2im*α*ω*ηₗ*r_inv/k * (1 - λ*β_inv)
-        #     A[8,2] = -1im*n*(n+1)*α*ω*ηₗ*r_inv/k * (1 - λ*β_inv)
-        #     A[8,3] = 1im*α*ω*ηₗ*β_inv / κ 
-        #     A[8,5] = n*(n+1)ρₗ * r_inv^2
-        #     A[8,7] = (n+1)n*r_inv^2 + 1im*ω*ηₗ/k * 
-        #              (α^2 *β_inv + ϕ /κₗ + (α-ϕ)/κ)
-        #     A[8,8] = -2r_inv
-        # end
-
-        # return A
-        # display(A)
     end
 
-    # Method 2 for matrix propagator: two-phase flow
-    function get_A(r, ρ, g, μ, κ, ρₗ, α, κₗ, ω, ηₗ, ϕ)
-        A = zeros(ComplexF64, 8, 8)
-        get_A!(A, r, ρ, g, μ, κ, ρₗ, α, κₗ, ω, ηₗ, ϕ)
-        return A
+    function get_B(r1, r2, g1, g2, ρ, μ, κ)
+        B = zeros(precc, 6, 6)
+        get_B!(B, r1, r2, g1, g2, ρ, μ, κ)
+        return B
     end
 
-    function get_A!(A::Matrix, r, ρ, g, μ, κ, ρₗ, α, κₗ, ω, ηₗ, ϕ)
-        get_A!(A[1:6, 1:6], r, ρ, g, μ, κ, η, ω)  
-
-        λ = κ .- 2μ/3
-
-        r_inv = 1.0/r
-        β_inv = 1.0/(2μ + λ)
-
-        mask = ϕ > 0.0
-
-        A[3,1] += 2g*ρₗ*α*r_inv * (-λ*β_inv +1) * mask           
-        A[3,2] += n*(n+1)*g*ρₗ*α*r_inv * (λ*β_inv - 1) * mask      
-        A[3,3] += β_inv*g*α*ρₗ * mask                             
-        A[3,7] = (α*β_inv * (-4μ*r_inv + ρₗ*g*α) + g*ρₗ*(ϕ/κₗ + (α-ϕ)/κ)) * mask
-        A[3,8] = 4π*G*ρₗ*ρ*k/(1im*ω*ηₗ) * mask
-    
-        A[4,7] = 2α*μ*r_inv / (2μ + λ) * mask
+    function get_B!(B, r1, r2, g1, g2, ρ, μ, κ)
+        dr = r2 - r1
+        rhalf = r1 + 0.5dr
         
-        A[5,8] = 4π*G*ρₗ*k / (1im * ω * ηₗ) * mask
+        ghalf = g1 + 0.5*(g2 - g1)
 
-        A[6,5] = -4π*n*(n+1)G*(ρₗ)^2*k*r_inv^2 / ( 1im*ω*ηₗ) * mask 
-        A[6,7] = -4π*n*(n+1)G*ρₗ*k*r_inv^2 / ( 1im*ω*ηₗ) * mask
-        A[6,8] = 4π*G*(n+1)*ρₗ*k*r_inv / (1im*ω*ηₗ) * mask
+        A1 = get_A(r1, ρ, g1, μ, κ)
+        Ahalf = get_A(rhalf, ρ, ghalf, μ, κ)
+        A2 = get_A(r2, ρ, g2, μ, κ)
         
-        A[7,1] = 4π*G*ρₗ*ρ * mask
-        A[7,5] = ρₗ*(n+1)*r_inv * mask
-        A[7,6] = ρₗ * mask
-        A[7,7] = -g*ρₗ / κₗ * mask
-        A[7,8] = 1 - 4π*G*(ρₗ)^2*k / (1im*ω*ηₗ) * mask
-    
-        A[8,1] = 2im*α*ω*ηₗ*r_inv/k * (1 - λ*β_inv) * mask
-        A[8,2] = -1im*n*(n+1)*α*ω*ηₗ*r_inv/k * (1 - λ*β_inv) * mask
-        A[8,3] = 1im*α*ω*ηₗ*β_inv / κ * mask
-        A[8,5] = n*(n+1)ρₗ * r_inv^2 * mask
-        A[8,7] = ((n+1)n*r_inv^2 + 1im*ω*ηₗ/k * (α^2 *β_inv + ϕ /κₗ + (α-ϕ)/κ)) * mask
-        A[8,8] = -2r_inv * mask
+        k1 = dr * A1 
+        k2 = dr * Ahalf * (I + 0.5k1)
+        k3 = dr * Ahalf * (I + 0.5k2)
+        k4 = dr * A2 * (I + k3) 
 
-        return A
-        
+        B[1:6,1:6] .= (I + 1.0/6.0 * (k1 + 2k2 + 2k3 + k4))
     end
 
-    function get_B_product(r, ρ, g, μ, κ, η, ω)
-        
-    
-        B = zeros(ComplexF64, 6, 6)
-        B = I # Set B to the Identity matrix
-        # Bprod[1,:,:] .= B[:,:]
+    # first method: solid layer -- for a specific layer?
+    function get_B_product2!(Bprod2, r, ρ, g, μ, κ)
+        # Check dimensions of Bprod2
 
-        #
-        layer_num = size(r)[2]
+        Bstart = zeros(precc, 6, 6)
+        B = zeros(precc, 6, 6)
+
+        for i in 1:6
+            Bstart[i,i,1] = 1
+        end
+
         nr = size(r)[1]
 
-        Bprod = zeros(ComplexF64, (6, 6, nr-1, layer_num))
+        r1 = r[1]
+        for j in 1:nr-1
+            r2 = r[j+1]
+            g1 = g[j]
+            g2 = g[j+1]
 
-        for i in 2:layer_num # start at the top of the innermost layer
-            r1 = r[1,i]
-            for j in 1:nr-1
-                r2 = r[j+1,i]
-                dr = r2 - r1
-                rhalf = r1 + 0.5dr
-                
-                ghalf = g[j, i] + 0.5*(g[j+1, i] - g[j, i])
+            get_B!(B, r1, r2, g1, g2, ρ, μ, κ)
+            Bprod2[:,:,j] .= B * (j==1 ? Bstart : Bprod2[:,:,j-1])
 
-                A1 = get_A(r1, ρ[i], g[j,i], μ[i], κ[i], η[i], ω)
-                Ahalf = get_A(rhalf, ρ[i], ghalf, μ[i], κ[i], η[i], ω)
-                A2 = get_A(r2, ρ[i], g[j+1,i], μ[i], κ[i], η[i], ω)
-                
-                
-                k1 = dr * A1 
-                k2 = dr * Ahalf * (I + 0.5k1)
-                k3 = dr * Ahalf * (I + 0.5k2)
-                k4 = dr * A2 * (I + k3) 
+            r1 = r2
+        end
+    end
 
-                B = (I + 1.0/6.0 * (k1 + 2k2 + 2k3 + k4)) * B
+    function calculate_y(r, ρ, g, μ, κ, core="liquid")
+        nlayers = size(r)[2]
+        nsublayers = size(r)[1]
 
-                # display(B)
+        y_start = get_Ic(r[end,1], ρ[1], g[end,1], μ[1], core, 6, 3)
 
-                Bprod[:,:,j,i] .= B[:,:]
+        y1_3 = zeros(precc, 6, 3, nsublayers-1, nlayers) # Three linearly independent y solutions
+        y = zeros(ComplexF64, 6, nsublayers-1, nlayers)
+        
+        for i in 2:nlayers
+            # Product of B matrices in sublayer
+            Bprod = zeros(precc, 6, 6, nsublayers-1)
+            get_B_product2!(Bprod, r[:, i], ρ[i], g[:, i], μ[i], κ[i])
 
-                r1 = r2
+            # Set B matrix product into y_solutions
+            for j in 1:nsublayers-1
+                y1_3[:,:,j,i] = Bprod[:,:,j] * y_start 
+            end
+
+            # Set y solutions for the start of the next layer
+            y_start[:,:] .= y1_3[:,:,end,i]  
+        end
+
+        # The ODE has now been integrated. Next, collect the constrained
+        # parts of the solution in order to apply BCs.
+
+        M = zeros(precc, 3,3)
+
+        # Row 1 - Radial Stress
+        M[1, :] .= y1_3[3,:,end,end]
+
+        # Row 2 - Tangential Stress
+        M[2, :] .= y1_3[4,:,end,end]
+    
+        # Row 3 - Potential Stress
+        M[3, :] .= y1_3[6,:,end,end]
+         
+        # Create boundary condition vector
+        b = zeros(precc, 3)
+        b[3] = (2n+1)/r[end,end] # non-zero potential stress for tidal forcing
+        
+        # Solve system of linear equations to find integration constants, C
+        C = M \ b
+
+        # Apply integration constants vector to integrated solution to obtain
+        # the true solution
+        for i in 2:nlayers
+            for j in 1:nsublayers-1
+                y[:,j,i] = y1_3[:,:,j,i]*C
             end
         end
 
-
-        # for i in eachindex(r[1:end-1])
-            
-        #     r2 = r[i+1]
-        #     dr = r2 - r1
-        #     rhalf = r1 + 0.5dr
-            
-        #     ghalf = g[i] + 0.5*(g[i+1] - g[i])
-
-        #     A1 = get_A(r1, ρ[i+1], g[i], μ[i+1], κ[i+1], η[i+1], ω)
-        #     Ahalf = get_A(rhalf, ρ[i+1], ghalf, μ[i+1], κ[i+1], η[i+1], ω)
-        #     A2 = get_A(r2, ρ[i+1], g[i+1], μ[i+1], κ[i+1], η[i+1], ω)
-            
-        #     k1 = dr * A1 
-        #     k2 = dr * Ahalf * (I + 0.5k1)
-        #     k3 = dr * Ahalf * (I + 0.5k2)
-        #     k4 = dr * A2 * (I + k3) 
-
-        #     B = (I + 1.0/6.0 * (k1 + 2k2 + 2k3 + k4)) * B
-
-        #     Bprod[i+1,:,:] .= B[:,:]
-
-        #     r1 = r2
-        # end
-
-        return Bprod
+        return y
     end
 
-    function get_Ic(r, ρ, g, μ, type)
-        Ic = zeros(Float64, M, 3)
+    # Get the total heating rate across the entire body
+    function get_bulk_heating(y, ω, R, ecc)
+        k2 = y[5, end,end] - 1.0    # Get k2 Love number at surface
+
+        return -21/2 * imag(k2) * (ω*R)^5/G * ecc^2
+    end
+
+
+    function get_solution(y, n, m, r, ρ, g, μ, κ, ω, ρₗ, κₗ, ηₗ, ϕ, k, res=5.0)
+        #κ is the bulk modulus of the solid! The drained bulk modulus
+        # is (1-α)*κ
+
+        λ = κ .- 2μ/3
+        κₛ = κ
+
+        lons = deg2rad.(collect(0:res:360-0.001))'
+        clats = deg2rad.(collect(0:res:180))
+
+        clats[1] += 1e-6
+        clats[end] -= 1e-6
+        cosTheta = cos.(clats)
+
+        Y = m < 0 ? Ynmc(n,abs(m),clats,lons) : Ynm(n,abs(m),clats,lons)
+        S = m < 0 ? Snmc(n,abs(m),clats,lons) : Snm(n,abs(m),clats,lons)
+
+        # Better way to do this? (Analytical expression?)
+        if iszero(abs(m))
+            # d2Ydθ2 = -3cos.(2clats) * exp.(1im * m * lons)
+            dYdθ = -1.5sin.(2clats) * exp.(1im * m * lons)
+            dYdϕ = Y * 1im * m
+
+            Z = 0.0 * Y
+            X = -6cos.(2clats)*exp.(1im *m * lons) .+ n*(n+1)*Y
+        elseif  abs(m) == 2
+            # d2Ydθ2 = 6cos.(2clats) * exp.(1im * m * lons)
+            dYdθ = 3sin.(2clats) * exp.(1im * m * lons)
+            dYdϕ = Y * 1im * m
+            
+            Z = 6 * 1im * m * cos.(clats) * exp.(1im * m * lons)
+            X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y 
+        end
+
+        disp = zeros(ComplexF64, length(clats), length(lons), 3, size(r)[1]-1, size(r)[2])
+        q_flux = zeros(ComplexF64, length(clats), length(lons), 3, size(r)[1]-1, size(r)[2])
+        ϵ = zeros(ComplexF64, length(clats), length(lons), 6, size(r)[1]-1, size(r)[2])
+        σ = zero(ϵ)
+        p = zeros(ComplexF64, length(clats), length(lons), size(r)[1]-1, size(r)[2])
+        ζ = zeros(ComplexF64, length(clats), length(lons), size(r)[1]-1, size(r)[2])
+
+        for i in 2:size(r)[2] # Loop of layers
+            ηₗr = ηₗ[i]
+            ρₗr = ρₗ[i]
+            ρr = ρ[i]
+            kr  = k[i]
+            κₗr = κₗ[i]
+            κr = κ[i]
+            μr = μ[i]
+            ϕr = ϕ[i]
+            λr = λ[i]
+
+            if ϕr > 0
+                κₛ = κ[i]
+                κd = (1-α)κₛ
+                κu = κd + κₗr .*κₛ .*α^2 ./ (ϕ[i] .* κₛ + (α-ϕ[i]) .* κₗr)
+                λr = κd .- 2μr/3
+            end
+            # λr = λ[i]
+
+            for j in 1:size(r)[1]-1 # Loop over sublayers 
+                (y1, y2, y3, y4, y5, y6, y7, y8) = ComplexF64.(y[:,j,i])
+                
+                rr = r[j,i]
+                gr = g[j,i]
+                
+                disp[:,:,:,j,i]   .= get_displacement(y1, y2, Y, S)
+                if ϕ[i] > 0
+                    q_flux[:,:,:,j,i] .= get_darcy_velocity(y5, y7, y8, kr, rr, ηₗr, ρₗr, Y, S)
+                end
+
+                A = ComplexF64.(get_A(rr, ρr, gr, μr, κr, ω, ρₗr, κₗr, ηₗr, ϕr, kr))
+                dy1dr = dot(A[1,:], y[:,j,i])
+                dy2dr = dot(A[2,:], y[:,j,i])
+
+                ϵ[:,:,1,j,i] = dy1dr * Y
+                ϵ[:,:,2,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y + 0.5y2*X)
+                ϵ[:,:,3,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y - 0.5y2*X)
+                ϵ[:,:,4,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdθ
+                ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats) 
+                ϵ[:,:,6,j,i] = 0.5 * y2/rr * Z
+                ϵV = dy1dr .+ 2/rr * y1 .- n*(n+1)/rr * y2
+
+                σ[:,:,1,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,1,j,i] .- (ϕ[i]>0 ? α*y7*Y : 0.0)
+                σ[:,:,2,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,2,j,i] .- (ϕ[i]>0 ? α*y7*Y : 0.0)
+                σ[:,:,3,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,3,j,i] .- (ϕ[i]>0 ? α*y7*Y : 0.0)
+                σ[:,:,4,j,i] .= 2μr * ϵ[:,:,4,j,i]
+                σ[:,:,5,j,i] .= 2μr * ϵ[:,:,5,j,i]
+                σ[:,:,6,j,i] .= 2μr * ϵ[:,:,6,j,i]
+
+                if ϕ[i] > 0
+                    p[:,:,j,i] .= y7 * Y
+                    ζ[:,:,j,i] .= (α*ϵV + α^2/(κu - κd) * y7) * Y
+                end
+
+            end
+        end
+
+        return disp, q_flux, ϵ, σ, p, ζ
+    end
+
+    function get_solution(y, n, m, r, ρ, g, μ, κ, res=10.0)
+        #κ is the bulk modulus of the solid! The drained bulk modulus
+        # is (1-α)*κ
+
+        λ = κ .- 2μ/3
+        # κₛ = κ
+
+        lons = deg2rad.(collect(0:res:360-0.001))'
+        clats = deg2rad.(collect(0:res:180))
+
+        clats[1] += 1e-6
+        clats[end] -= 1e-6
+        cosTheta = cos.(clats)
+
+        Y = m < 0 ? Ynmc(n,abs(m),clats,lons) : Ynm(n,abs(m),clats,lons)
+        S = m < 0 ? Snmc(n,abs(m),clats,lons) : Snm(n,abs(m),clats,lons)
+
+        # Better way to do this? (Analytical expression?)
+        if iszero(abs(m))
+            # d2Ydθ2 = -3cos.(2clats) * exp.(1im * m * lons)
+            dYdθ = -1.5sin.(2clats) * exp.(1im * m * lons)
+            dYdϕ = Y * 1im * m
+
+            Z = 0.0 * Y
+            X = -6cos.(2clats)*exp.(1im *m * lons) .+ n*(n+1)*Y
+        elseif  abs(m) == 2
+            # d2Ydθ2 = 6cos.(2clats) * exp.(1im * m * lons)
+            dYdθ = 3sin.(2clats) * exp.(1im * m * lons)
+            dYdϕ = Y * 1im * m
+            
+            Z = 6 * 1im * m * cos.(clats) * exp.(1im * m * lons)
+            X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y 
+        end
+
+        disp = zeros(ComplexF64, length(clats), length(lons), 3, size(r)[1]-1, size(r)[2])
+        # q_flux = zeros(ComplexF64, length(clats), length(lons), 3, size(r)[1]-1, size(r)[2])
+        ϵ = zeros(ComplexF64, length(clats), length(lons), 6, size(r)[1]-1, size(r)[2])
+        σ = zero(ϵ)
+        p = zeros(ComplexF64, length(clats), length(lons), size(r)[1]-1, size(r)[2])
+        ζ = zeros(ComplexF64, length(clats), length(lons), size(r)[1]-1, size(r)[2])
+
+        for i in 2:size(r)[2] # Loop of layers
+            # ηₗr = ηₗ[i]
+            # ρₗr = ρₗ[i]
+            ρr = ρ[i]
+            # kr  = k[i]
+            # κₗr = κₗ[i]
+            κr = κ[i]
+            μr = μ[i]
+            # ϕr = ϕ[i]
+            λr = λ[i]
+
+            for j in 1:size(r)[1]-1 # Loop over sublayers 
+                (y1, y2, y3, y4, y5, y6) = y[:,j,i]
+                
+                rr = r[j,i]
+                gr = g[j,i]
+                
+                disp[:,:,:,j,i]   .= get_displacement(y1, y2, Y, S)
+
+                A = get_A(rr, ρr, gr, μr, κr)
+                dy1dr = dot(A[1,:], y[:,j,i])
+                dy2dr = dot(A[2,:], y[:,j,i])
+
+                ϵ[:,:,1,j,i] = dy1dr * Y
+                ϵ[:,:,2,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y + 0.5y2*X)
+                ϵ[:,:,3,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y - 0.5y2*X)
+                ϵ[:,:,4,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdθ
+                ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats) 
+                ϵ[:,:,6,j,i] = 0.5 * y2/rr * Z
+                ϵV = dy1dr .+ 2/rr * y1 .- n*(n+1)/rr * y2
+
+                σ[:,:,1,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,1,j,i] 
+                σ[:,:,2,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,2,j,i] 
+                σ[:,:,3,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,3,j,i] 
+                σ[:,:,4,j,i] .= 2μr * ϵ[:,:,4,j,i]
+                σ[:,:,5,j,i] .= 2μr * ϵ[:,:,5,j,i]
+                σ[:,:,6,j,i] .= 2μr * ϵ[:,:,6,j,i]
+
+            end
+        end
+
+        return disp, ϵ, σ
+    end
+
+    function get_Ic(r, ρ, g, μ, type, M=6, N=3)
+        Ic = zeros(precc, M, N)
 
         if type=="liquid"
             Ic[1,1] = -r^n / g
@@ -290,42 +445,15 @@ module TidalLoveNumbers
         return Ic
     end
 
-    function expand_layers(r)#, ρ, μ, κ, η)
-        # rs = zeros(Float64, (length(r)-1)*nr - length(r) + 2)
-        rs = zeros(Float64, (nr+1, length(r)-1))
-        # display(rs)
-        # display(rs)
-
-
-        # ρs = zero(rs)
-        # μs = zeros(ComplexF64, size(rs))
-        # κs = zero(rs)
-        # ηs = zero(rs)
-
+    function expand_layers(r)
+        rs = zeros(prec, (nr+1, length(r)-1))
         
-
-        # rindex = 1
-        # ρs[1] = ρ[1]
-        # μs[1] = μ[1]
-        # κs[1] = κ[1]
-        # ηs[1] = η[1]
-        
-            for i in 1:length(r)-1
-                rfine = LinRange(r[i], r[i+1], nr+1)
-                rs[:, i] .= rfine[1:end] 
-                # ρs[:,i] .= ρ[i]
-                # μs[rindex+1:rindex + length(rfine)  ] .= μ[i+1]
-                # κs[rindex+1:rindex + length(rfine)  ] .= κ[i+1]
-                # ηs[rindex+1:rindex + length(rfine)  ] .= η[i+1]
-                
-                # rindex = rindex + length(rfine)
-            end
-        
-        # rs[end] = r[end]
-        # display(rs)
-        # display(ρs)
-        
-        return rs#, ρs, μs, κs, ηs
+        for i in 1:length(r)-1
+            rfine = LinRange(r[i], r[i+1], nr+1)
+            rs[:, i] .= rfine[1:end] 
+        end
+    
+        return rs
     end
 
     
