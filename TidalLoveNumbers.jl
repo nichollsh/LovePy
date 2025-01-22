@@ -50,6 +50,10 @@ module TidalLoveNumbers
         TidalLoveNumbers.G = new_G
     end
 
+    function set_nr(new_nr)
+        TidalLoveNumbers.nr = new_nr
+    end
+
     function get_g(r, ρ)
         g = zeros(prec, size(r))
         M = zeros(prec, size(r))
@@ -160,7 +164,7 @@ module TidalLoveNumbers
         end
     end
 
-    function calculate_y(r, ρ, g, μ, κ, core="liquid")
+    function calculate_y(r, ρ, g, μ, κ; core="liquid")
         nlayers = size(r)[2]
         nsublayers = size(r)[1]
 
@@ -445,7 +449,12 @@ module TidalLoveNumbers
         return Ic
     end
 
-    function expand_layers(r)
+    # inputs:
+    #   r: Radii of main layers (core, mantle, crust, etc)
+    #   nr: number of sublayers to discretize the main layers with (TODO: make nr an array)
+    function expand_layers(r; nr::Int=80)
+        set_nr(nr) # Update nr globally 
+
         rs = zeros(prec, (nr+1, length(r)-1))
         
         for i in 1:length(r)-1
