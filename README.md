@@ -1,6 +1,9 @@
 ## LovePy tidal heating model
 
+Viscoelastic solid-phase tidal heating model.
+
 Developed by Hamish Hay.
+
 Forked from the [original](https://github.com/hamishHay/lovepy/tree/julia_solid_body) repository.
 
 ### Citations
