@@ -1,0 +1,14 @@
+name = "LovePy"
+uuid = "9c34abe9-7dbc-4ea7-80be-621f56f870c7"
+authors = ["Harrison Nicholls <harrison.nicholls@physics.ox.ac.uk>"]
+version = "0.1.0"
+
+[deps]
+AssociatedLegendrePolynomials = "2119f1ac-fb78-50f5-8cc0-dda848ebdb19"
+DoubleFloats = "497a8b3b-efae-58df-a0af-a86822472b78"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+
+[compat]
+AssociatedLegendrePolynomials = "1.0.1"
+DoubleFloats = "1.4.2"
+LinearAlgebra = "1.11.0"

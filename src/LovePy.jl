@@ -10,7 +10,7 @@
 # ω: rotation rate
 
 
-module TidalLoveNumbers
+module LovePy
 
     using LinearAlgebra
     using DoubleFloats
@@ -47,11 +47,11 @@ module TidalLoveNumbers
     # Overwrite Gravitional constant for non-dimensional 
     # calculations
     function set_G(new_G)
-        TidalLoveNumbers.G = new_G
+        LovePy.G = new_G
     end
 
     function set_nr(new_nr)
-        TidalLoveNumbers.nr = new_nr
+        LovePy.nr = new_nr
     end
 
     function get_g(r, ρ)
