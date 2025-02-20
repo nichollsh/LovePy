@@ -2,19 +2,19 @@
 # Author: H. Hay
 
 # μ: solid shear modulus
-# ρ: solid density 
-# κ: solid bulk modulus 
+# ρ: solid density
+# κ: solid bulk modulus
 # λ: Lame's First Parameter
-# η: solid viscosity 
-# g: gravity 
+# η: solid viscosity
+# g: gravity
 # ω: rotation rate
-
 
 module LovePy
 
     using LinearAlgebra
     using DoubleFloats
     using AssociatedLegendrePolynomials
+
     include("SphericalHarmonics.jl")
     using .SphericalHarmonics
 
@@ -22,20 +22,22 @@ module LovePy
     export expand_layers, set_G, calculate_y
     export get_displacement, get_solution
     export get_bulk_heating, get_heating_profile
+    export calc_lovepy_tides
 
     # If results seem odd, you can increase the numerical precision with
     # one of the options below. These get quite a bit slower...
-    prec = Float64 
-    precc = ComplexF64 
+    prec = Float64
+    precc = ComplexF64
 
-    # prec = Double64     
-    # precc = ComplexDF64 
+    # prec = Double64
+    # precc = ComplexDF64
 
     # prec = BigFloat
     # precc = Complex{BigFloat}
 
     G = prec(6.6743e-11)
     n = 2
+    SPATIAL_RES::prec = 10.0
 
     M = 6              # Matrix size: 6x6 if only solid material, 8x8 for two-phases
     nr = 80            # Number of sub-layers in each layer (TODO: change to an array)
@@ -44,7 +46,57 @@ module LovePy
     Amid = zeros(precc, 6, 6)
     Atop = zeros(precc, 6, 6)
 
-    # Overwrite Gravitional constant for non-dimensional 
+    # Calculate heating from interior properties
+    function calc_lovepy_tides( omega::prec,
+                                    ecc::prec,
+                                    rho::Array{prec,1},
+                                    radius::Array{prec,1},
+                                    visc::Array{prec,1},
+                                    shear::Array{prec,1},
+                                    bulk::Array{prec,1};
+                                    ncalc::Int=2000
+                                    )::Tuple{Array{Float64,1},Float64,Float64}
+
+        # Internal structure arrays.
+        # First element is the innermost layer, last element is the outermost layer
+        ρ = convert(Vector{prec}, rho)
+        r = convert(Vector{prec}, radius)
+        η = convert(Vector{prec}, visc)
+        μ = convert(Vector{precc},shear)
+        κ = convert(Vector{prec}, bulk)
+
+        # Complex shear modulus for a Maxwell material. Change this for different rheologies.
+        μc = 1im * μ*omega ./ (1im*omega .+ μ./η)
+
+        # Outer radius
+        R = r[end]
+
+        # Subdivide input layers such that we have ~ncalc in total
+        rr = expand_layers(r, nr=convert(Int,div(ncalc,length(η))))
+
+        # Get gravity at each layer
+        g = get_g(rr, ρ);
+
+        # Get y-functions
+        tidal_solution = calculate_y(rr, ρ, g, μc, κ)
+
+        # Get k2 tidal Love Number (complex-valued)
+        k2 = tidal_solution[5, end, end] - 1
+
+        # Get bulk power output in watts
+        power_blk = get_bulk_heating(tidal_solution, omega, R, ecc)
+
+        # Get profile power output (W m-3), converted to W/kg
+        power_prf = get_heating_profile(tidal_solution,
+                    rr, ρ, g, μc, κ,
+                    omega, ecc, res=SPATIAL_RES)
+        power_prf = power_prf ./ ρ # Convert to mass heating rate (W/kg)
+
+        return power_prf, power_blk, imag(k2)
+    end
+
+
+    # Overwrite Gravitional constant for non-dimensional
     # calculations
     function set_G(new_G)
         LovePy.G = new_G
@@ -70,7 +122,7 @@ module LovePy
     end
 
     function get_A(r, ρ, g, μ, κ)
-        A = zeros(precc, 6, 6) 
+        A = zeros(precc, 6, 6)
         get_A!(A, r, ρ, g, μ, κ)
         return A
     end
@@ -100,7 +152,7 @@ module LovePy
 
         A[4,1] = -r_inv * (6κ*μ*r_inv*β_inv - ρ*g )
         A[4,2] = 2μ*r_inv^2 * (n*(n+1)*(1 + λ*β_inv) - 1.0 )
-        A[4,3] = -r_inv * λ * β_inv # changed to match sabadini    
+        A[4,3] = -r_inv * λ * β_inv # changed to match sabadini
         A[4,4] = -3r_inv
         A[4,5] = ρ*r_inv
 
@@ -123,17 +175,17 @@ module LovePy
     function get_B!(B, r1, r2, g1, g2, ρ, μ, κ)
         dr = r2 - r1
         rhalf = r1 + 0.5dr
-        
+
         ghalf = g1 + 0.5*(g2 - g1)
 
         A1 = get_A(r1, ρ, g1, μ, κ)
         Ahalf = get_A(rhalf, ρ, ghalf, μ, κ)
         A2 = get_A(r2, ρ, g2, μ, κ)
-        
-        k1 = dr * A1 
+
+        k1 = dr * A1
         k2 = dr * Ahalf * (I + 0.5k1)
         k3 = dr * Ahalf * (I + 0.5k2)
-        k4 = dr * A2 * (I + k3) 
+        k4 = dr * A2 * (I + k3)
 
         B[1:6,1:6] .= (I + 1.0/6.0 * (k1 + 2k2 + 2k3 + k4))
     end
@@ -172,7 +224,7 @@ module LovePy
 
         y1_3 = zeros(precc, 6, 3, nsublayers-1, nlayers) # Three linearly independent y solutions
         y = zeros(ComplexF64, 6, nsublayers-1, nlayers)
-        
+
         for i in 2:nlayers
             # Product of B matrices in sublayer
             Bprod = zeros(precc, 6, 6, nsublayers-1)
@@ -180,11 +232,11 @@ module LovePy
 
             # Set B matrix product into y_solutions
             for j in 1:nsublayers-1
-                y1_3[:,:,j,i] = Bprod[:,:,j] * y_start 
+                y1_3[:,:,j,i] = Bprod[:,:,j] * y_start
             end
 
             # Set y solutions for the start of the next layer
-            y_start[:,:] .= y1_3[:,:,end,i]  
+            y_start[:,:] .= y1_3[:,:,end,i]
         end
 
         # The ODE has now been integrated. Next, collect the constrained
@@ -197,14 +249,14 @@ module LovePy
 
         # Row 2 - Tangential Stress
         M[2, :] .= y1_3[4,:,end,end]
-    
+
         # Row 3 - Potential Stress
         M[3, :] .= y1_3[6,:,end,end]
-         
+
         # Create boundary condition vector
         b = zeros(precc, 3)
         b[3] = (2n+1)/r[end,end] # non-zero potential stress for tidal forcing
-        
+
         # Solve system of linear equations to find integration constants, C
         C = M \ b
 
@@ -256,9 +308,9 @@ module LovePy
             # d2Ydθ2 = 6cos.(2clats) * exp.(1im * m * lons)
             dYdθ = 3sin.(2clats) * exp.(1im * m * lons)
             dYdϕ = Y * 1im * m
-            
+
             Z = 6 * 1im * m * cos.(clats) * exp.(1im * m * lons)
-            X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y 
+            X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y
         end
 
         disp = zeros(ComplexF64, length(clats), length(lons), 3, size(r)[1]-1, size(r)[2])
@@ -287,12 +339,12 @@ module LovePy
             end
             # λr = λ[i]
 
-            for j in 1:size(r)[1]-1 # Loop over sublayers 
+            for j in 1:size(r)[1]-1 # Loop over sublayers
                 (y1, y2, y3, y4, y5, y6, y7, y8) = ComplexF64.(y[:,j,i])
-                
+
                 rr = r[j,i]
                 gr = g[j,i]
-                
+
                 disp[:,:,:,j,i]   .= get_displacement(y1, y2, Y, S)
                 if ϕ[i] > 0
                     q_flux[:,:,:,j,i] .= get_darcy_velocity(y5, y7, y8, kr, rr, ηₗr, ρₗr, Y, S)
@@ -306,7 +358,7 @@ module LovePy
                 ϵ[:,:,2,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y + 0.5y2*X)
                 ϵ[:,:,3,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y - 0.5y2*X)
                 ϵ[:,:,4,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdθ
-                ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats) 
+                ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats)
                 ϵ[:,:,6,j,i] = 0.5 * y2/rr * Z
                 ϵV = dy1dr .+ 2/rr * y1 .- n*(n+1)/rr * y2
 
@@ -357,9 +409,9 @@ module LovePy
             # d2Ydθ2 = 6cos.(2clats) * exp.(1im * m * lons)
             dYdθ = 3sin.(2clats) * exp.(1im * m * lons)
             dYdϕ = Y * 1im * m
-            
+
             Z = 6 * 1im * m * cos.(clats) * exp.(1im * m * lons)
-            X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y 
+            X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y
         end
 
         disp = zeros(ComplexF64, length(clats), length(lons), 3, size(r)[1]-1, size(r)[2])
@@ -380,12 +432,12 @@ module LovePy
             # ϕr = ϕ[i]
             λr = λ[i]
 
-            for j in 1:size(r)[1]-1 # Loop over sublayers 
+            for j in 1:size(r)[1]-1 # Loop over sublayers
                 (y1, y2, y3, y4, y5, y6) = y[:,j,i]
-                
+
                 rr = r[j,i]
                 gr = g[j,i]
-                
+
                 disp[:,:,:,j,i]   .= get_displacement(y1, y2, Y, S)
 
                 A = get_A(rr, ρr, gr, μr, κr)
@@ -396,13 +448,13 @@ module LovePy
                 ϵ[:,:,2,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y + 0.5y2*X)
                 ϵ[:,:,3,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y - 0.5y2*X)
                 ϵ[:,:,4,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdθ
-                ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats) 
+                ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats)
                 ϵ[:,:,6,j,i] = 0.5 * y2/rr * Z
                 ϵV = dy1dr .+ 2/rr * y1 .- n*(n+1)/rr * y2
 
-                σ[:,:,1,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,1,j,i] 
-                σ[:,:,2,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,2,j,i] 
-                σ[:,:,3,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,3,j,i] 
+                σ[:,:,1,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,1,j,i]
+                σ[:,:,2,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,2,j,i]
+                σ[:,:,3,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,3,j,i]
                 σ[:,:,4,j,i] .= 2μr * ϵ[:,:,4,j,i]
                 σ[:,:,5,j,i] .= 2μr * ϵ[:,:,5,j,i]
                 σ[:,:,6,j,i] .= 2μr * ϵ[:,:,6,j,i]
@@ -432,7 +484,7 @@ module LovePy
         σs = zero(ϵ)
 
         # Eccentricity tide forcing coefficients
-        U22E =  7/8 * ω^2*R^2*ecc 
+        U22E =  7/8 * ω^2*R^2*ecc
         U22W = -1/8 * ω^2*R^2*ecc
         U20  = -3/2 * ω^2*R^2*ecc
 
@@ -440,7 +492,7 @@ module LovePy
         n = 2
         for m in [-2, 2, 0]
             Y = m < 0 ? Ynmc(n,abs(m),clats,lons) : Ynm(n,abs(m),clats,lons)
-            S = m < 0 ? Snmc(n,abs(m),clats,lons) : Snm(n,abs(m),clats,lons)    
+            S = m < 0 ? Snmc(n,abs(m),clats,lons) : Snm(n,abs(m),clats,lons)
 
             if iszero(abs(m))
                 dYdθ = -1.5sin.(2clats) * exp.(1im * m * lons)
@@ -452,9 +504,9 @@ module LovePy
             elseif  abs(m) == 2
                 dYdθ = 3sin.(2clats) * exp.(1im * m * lons)
                 dYdϕ = Y * 1im * m
-                
+
                 Z = 6 * 1im * m * cos.(clats) * exp.(1im * m * lons)
-                X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y 
+                X = 12cos.(2clats)* exp.(1im * m * lons) .+ n*(n+1)*Y
             end
 
             for i in 2:size(r)[2] # Loop of layers
@@ -463,9 +515,9 @@ module LovePy
                 μr = μ[i]
                 λr = λ[i]
 
-                for j in 1:size(r)[1]-1 # Loop over sublayers 
+                for j in 1:size(r)[1]-1 # Loop over sublayers
                     (y1, y2, y3, y4, y5, y6) = conj.(y[:,j,i])
-                    
+
                     rr = r[j,i]
                     gr = g[j,i]
 
@@ -478,14 +530,14 @@ module LovePy
                     ϵ[:,:,2,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y + 0.5y2*X)
                     ϵ[:,:,3,j,i] = 1/rr * ((y1 - 0.5n*(n+1)y2)Y - 0.5y2*X)
                     ϵ[:,:,4,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdθ
-                    ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats) 
+                    ϵ[:,:,5,j,i] = 0.5 * (dy2dr + (y1 - y2)/rr) .* dYdϕ .* 1.0 ./ sin.(clats)
                     ϵ[:,:,6,j,i] = 0.5 * y2/rr * Z
                     ϵV = dy1dr .+ 2/rr * y1 .- n*(n+1)/rr * y2
 
                     # Compute stress tensor
-                    σ[:,:,1,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,1,j,i] 
-                    σ[:,:,2,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,2,j,i] 
-                    σ[:,:,3,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,3,j,i] 
+                    σ[:,:,1,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,1,j,i]
+                    σ[:,:,2,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,2,j,i]
+                    σ[:,:,3,j,i] .= λr * ϵV * Y + 2μr*ϵ[:,:,3,j,i]
                     σ[:,:,4,j,i] .= 2μr * ϵ[:,:,4,j,i]
                     σ[:,:,5,j,i] .= 2μr * ϵ[:,:,5,j,i]
                     σ[:,:,6,j,i] .= 2μr * ϵ[:,:,6,j,i]
@@ -517,15 +569,15 @@ module LovePy
                 dvol = 4π/3 * (r[i+1, j]^3 - r[i, j]^3)
 
                 # Dissipated energy per unit volume
-                Eₛ_vol[:,:,i, j] =  ( sum(σs[:,:,1:3,i,j] .* conj.(ϵs[:,:,1:3,i,j]), dims=3) .- sum(conj.(σs[:,:,1:3,i,j]) .* ϵs[:,:,1:3,i,j], dims=3) ) * 1im 
-                Eₛ_vol[:,:,i, j] += 2( sum(σs[:,:,4:6,i,j] .* conj.(ϵs[:,:,4:6,i,j]), dims=3) .- sum(conj.(σs[:,:,4:6,i,j]) .* ϵs[:,:,4:6,i,j], dims=3) ) * 1im 
+                Eₛ_vol[:,:,i, j] =  ( sum(σs[:,:,1:3,i,j] .* conj.(ϵs[:,:,1:3,i,j]), dims=3) .- sum(conj.(σs[:,:,1:3,i,j]) .* ϵs[:,:,1:3,i,j], dims=3) ) * 1im
+                Eₛ_vol[:,:,i, j] += 2( sum(σs[:,:,4:6,i,j] .* conj.(ϵs[:,:,4:6,i,j]), dims=3) .- sum(conj.(σs[:,:,4:6,i,j]) .* ϵs[:,:,4:6,i,j], dims=3) ) * 1im
                 Eₛ_vol[:,:,i, j] .*= -0.25ω
 
                 # # Integrate across r to find dissipated energy per unit area
                 # Eₛ_area[:,:] .+= Eₛ_vol[:,:, i, j] * dr
 
                 Eₛ_vol_layer_sph_avg[j] += sum(sin.(clats) .* (Eₛ_vol[:,:,i,j])  * dres^2) * r[i,j]^2.0 * dr
-                # Eₛ_total += sum(sin.(clats) .* (Eₛ_vol[:,:,i,j] * dr)  * dres^2 * r[i,j]^2.0) 
+                # Eₛ_total += sum(sin.(clats) .* (Eₛ_vol[:,:,i,j] * dr)  * dres^2 * r[i,j]^2.0)
             end
 
             Eₛ_vol_layer_sph_avg[j] /= layer_volume
@@ -544,7 +596,7 @@ module LovePy
             Ic[3,3] = g*ρ
             Ic[5,1] = r^n
             Ic[6,1] = 2(n-1)*r^(n-1)
-            Ic[6,3] = 4π * G * ρ 
+            Ic[6,3] = 4π * G * ρ
         else # incompressible solid core
             # First column
             Ic[1, 1] = n*r^( n+1 ) / ( 2*( 2n + 3) )
@@ -574,17 +626,17 @@ module LovePy
     #   r: Radii of main layers (core, mantle, crust, etc)
     #   nr: number of sublayers to discretize the main layers with (TODO: make nr an array)
     function expand_layers(r; nr::Int=80)
-        set_nr(nr) # Update nr globally 
+        set_nr(nr) # Update nr globally
 
         rs = zeros(prec, (nr+1, length(r)-1))
-        
+
         for i in 1:length(r)-1
             rfine = LinRange(r[i], r[i+1], nr+1)
-            rs[:, i] .= rfine[1:end] 
+            rs[:, i] .= rfine[1:end]
         end
-    
+
         return rs
     end
 
-    
+
 end
